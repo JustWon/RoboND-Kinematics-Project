@@ -21,6 +21,48 @@ import pickle
 import os
 
 
+# define and initialize all symbolic variables outside the IK_server() call
+# since defining and setting up symbolic variables in Sympy every iteration is expensive.
+q1, q2, q3, q4, q5, q6, q7 = symbols('q1:8')
+d1, d2, d3, d4, d5, d6, d7 = symbols('d1:8')
+a0, a1, a2, a3, a4, a5, a6 = symbols('a0:7')
+alpha0, alpha1, alpha2, alpha3, alpha4, alpha5, alpha6 = symbols('alpha0:7')
+
+# Define Modified DH Transformation matrix
+def Transformation_Matrix(alpha, a, d, q):
+    MAT = Matrix([[            cos(q),            -sin(q),            0,              a],
+                  [ sin(q)*cos(alpha),  cos(q)*cos(alpha),  -sin(alpha),  -sin(alpha)*d],
+                  [ sin(q)*sin(alpha),  cos(q)*sin(alpha),   cos(alpha),   cos(alpha)*d],
+                  [                 0,                  0,            0,             1]])
+    return MAT
+
+def dump_R_G():
+    r, p, y = symbols('r p y')
+        
+    R_z = Matrix([[   cos(y),   -sin(y),         0],
+                  [   sin(y),    cos(y),         0],
+                  [        0,         0,         1]]) # YAW
+
+    R_y = Matrix([[   cos(p),         0,    sin(p)],
+                  [        0,         1,         0],
+                  [  -sin(p),         0,    cos(p)]]) # PITCH
+
+    R_x = Matrix([[        1,         0,         0],
+                  [        0,    cos(r),   -sin(r)],
+                  [        0,    sin(r),    cos(r)]]) # ROLL
+
+    # Extrinsically multiply the rotation matrices so that gripper rotation can be
+    # calculated from yaw, pitch and roll values provided by Gazebo
+    R_G = R_z * R_y * R_x
+
+    # Finally, a further rotation must be applied to account for the difference
+    # between the URDF and Gazebo (world) frames
+    Rot_correction = R_z.subs(y, pi) * R_y.subs(p, -pi/2)
+    R_G = R_G * Rot_correction
+
+    pickle.dump(R_G, open("R_G.p", "wb"))
+
+
 def handle_calculate_IK(req):
     rospy.loginfo("Received %s eef-poses from the plan" % len(req.poses))
     print(req.poses)
@@ -31,11 +73,7 @@ def handle_calculate_IK(req):
 
         ### Your FK code here
         # Create symbols dor DH parameter table
- 
-        q1, q2, q3, q4, q5, q6, q7 = symbols('q1:8')
-        d1, d2, d3, d4, d5, d6, d7 = symbols('d1:8')
-        a0, a1, a2, a3, a4, a5, a6 = symbols('a0:7')
-        alpha0, alpha1, alpha2, alpha3, alpha4, alpha5, alpha6 = symbols('alpha0:7')
+
 
         # KUKA KR210
         # Create Modified DH parameters
@@ -50,14 +88,6 @@ def handle_calculate_IK(req):
              alpha4:  pi/2., a4:      0, d5:     0, q5:       q5,
              alpha5: -pi/2., a5:      0, d6:     0, q6:       q6,
              alpha6:     0 , a6:      0, d7: 0.303, q7:        0}
-
-        # Define Modified DH Transformation matrix
-        def Transformation_Matrix(alpha, a, d, q):
-            MAT = Matrix([[            cos(q),            -sin(q),            0,              a],
-                          [ sin(q)*cos(alpha),  cos(q)*cos(alpha),  -sin(alpha),  -sin(alpha)*d],
-                          [ sin(q)*sin(alpha),  cos(q)*sin(alpha),   cos(alpha),   cos(alpha)*d],
-                          [                 0,                  0,            0,             1]])
-            return MAT
 
         # Create individual transformation matrices
         T0_1 = Transformation_Matrix(alpha0, a0, d1, q1).subs(s)
@@ -77,9 +107,9 @@ def handle_calculate_IK(req):
             # IK code starts here
             joint_trajectory_point = JointTrajectoryPoint()
 
-        # Extract end-effector position and orientation from request
-        # px,py,pz = end-effector position
-        # roll, pitch, yaw = end-effector orientation
+            # Extract end-effector position and orientation from request
+            # px,py,pz = end-effector position
+            # roll, pitch, yaw = end-effector orientation
             px = req.poses[x].position.x
             py = req.poses[x].position.y
             pz = req.poses[x].position.z
@@ -92,31 +122,7 @@ def handle_calculate_IK(req):
             # Step 1: find the rotation of the gripper
             # Generate generic rotation matrices
             if not os.path.exists("R_G.p"):
-                r, p, y = symbols('r p y')
-        
-                R_z = Matrix([[   cos(y),   -sin(y),         0],
-                              [   sin(y),    cos(y),         0],
-                              [        0,         0,         1]]) # YAW
-    
-                R_y = Matrix([[   cos(p),         0,    sin(p)],
-                              [        0,         1,         0],
-                              [  -sin(p),         0,    cos(p)]]) # PITCH
-    
-                R_x = Matrix([[        1,         0,         0],
-                              [        0,    cos(r),   -sin(r)],
-                              [        0,    sin(r),    cos(r)]]) # ROLL
-
-                # Extrinsically multiply the rotation matrices so that gripper rotation can be
-                # calculated from yaw, pitch and roll values provided by Gazebo
-                R_G = R_z * R_y * R_x
-
-                # Finally, a further rotation must be applied to account for the difference
-                # between the URDF and Gazebo (world) frames
-                Rot_correction = R_z.subs(y, pi) * R_y.subs(p, -pi/2)
-                R_G = R_G * Rot_correction
-
-                pickle.dump(R_G, open("R_G.p", "wb"))
-
+                dump_R_G()
             else:
                 R_G = pickle.load(open("R_G.p", "rb"))
 
